@@ -621,7 +621,7 @@ static HRESULT WINAPI SArchiveUpdateCallbackBare_GetProperty(void* _self, u32 in
 	//printf("%d %d\n",index,propID);
 	if(propID == kpidPath){
 		value->vt = VT_BSTR;
-		value->bstrVal = SysAllocStringLen(NULL,3);
+		value->bstrVal = SysAllocStringLen(NULL,1);
 		wcscpy(value->bstrVal,L"$");
 	}else if(propID == kpidIsDir || propID == kpidIsAnti){
 		value->vt = VT_BOOL;
