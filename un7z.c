@@ -3,52 +3,7 @@
 /// cannot handle multivolume archives ///
 
 #include "../lib/lzma.h"
-#include <string.h>
-
-bool wildmatch(const char *pattern, const char *compare){
-	switch(*pattern){
-		case '?': //0x3f
-			return *compare&&wildmatch(pattern+1,compare+1);
-		case '*': //0x2a
-			return wildmatch(pattern+1,compare)||(*compare&&wildmatch(pattern,compare+1));
-		default:
-			if(!*pattern&&!*compare)return true;
-			if(*pattern!=*compare)return false;
-			return wildmatch(pattern+1,compare+1);
-	}
-}
-
-bool matchwildcard2(const char *wildcard, const char *string, const int iMode){
-	int u=0,u1=0,u2=0;
-	char pattern[768];
-	char compare[768];
-	if(!wildcard||!string)return 0;
-	strcpy(pattern,wildcard);
-	strcpy(compare,string);
-
-	for(u=0;u<strlen(pattern);u++){
-		pattern[u]=upcase(pattern[u]);
-		if(pattern[u]=='\\')pattern[u]='/';
-		if(pattern[u]=='/')u1++;
-	}
-
-	for(u=0;u<strlen(compare);u++){
-		compare[u]=upcase(compare[u]);
-		if(compare[u]=='\\')compare[u]='/';
-		if(compare[u]=='/')u2++;
-	}
-
-	if(
-		(iMode==wildmode_string)||
-		(iMode==wildmode_samedir&&u1==u2)||
-		(iMode==wildmode_recursive&&u1<=u2)
-	)return wildmatch(pattern, compare);
-	return false;
-}
-
-bool matchwildcard(const char *wildcard, const char *string){
-	return matchwildcard2(wildcard, string, wildmode_string);
-}
+#include "../lib/xutil.h" // ismatchwildcard
 
 #include <stdio.h>
 //#include <stdlib.h>
@@ -74,6 +29,7 @@ typedef struct{
 	u32 lastIndex;
 	int argc;
 	const char **argv;
+	const char *dir;
 } SArchiveExtractCallbackFileList;
 
 static HRESULT WINAPI SArchiveExtractCallbackFileList_GetStream(void* _self, u32 index, /*ISequentialOutStream_*/IOutStream_ **outStream, s32 askExtractMode){
@@ -83,17 +39,22 @@ static HRESULT WINAPI SArchiveExtractCallbackFileList_GetStream(void* _self, u32
 	memset(&path,0,sizeof(PROPVARIANT));
 	self->lastIndex = index;
 	lzmaGetArchiveFileProperty(self->archiver, index, kpidPath, &path);
-	int len = wcslen(path.bstrVal);
-	char *fname = (char*)malloc(len*3);
-	wcstombs(fname,path.bstrVal,len*3);
-	PropVariantClear(&path);
-	if(!match(fname,self->argc,self->argv)){
-		printf("Extracting %s...\n",fname);
-		makedir(fname);
-		IOutStream_* stream = (IOutStream_*)calloc(1,sizeof(SOutStreamFile));
-		MakeSOutStreamFile((SOutStreamFile*)stream,fname);
-		*outStream = stream; // WILL BE RELEASED AUTOMATICALLY.
+	int len = SysStringLen(path.bstrVal);
+	int dirlen = strlen(self->dir);
+	char *fname = (char*)calloc(1,dirlen+len*3);
+	strcpy(fname,self->dir);
+	if(path.bstrVal){
+		wcstombs(fname+dirlen,path.bstrVal,len*3);
+		if(!match(fname+dirlen,self->argc,self->argv)){
+			printf("Extracting %s...\n",fname+dirlen);
+			makedir(fname);
+			IOutStream_* stream = (IOutStream_*)calloc(1,sizeof(SOutStreamFile));
+			MakeSOutStreamFile((SOutStreamFile*)stream,fname);
+			*outStream = stream; // WILL BE RELEASED AUTOMATICALLY.
+		}
 	}
+	PropVariantClear(&path);
+	free(fname);
 	return S_OK;
 }
 
@@ -114,7 +75,7 @@ static int extract(const char *password,const char *arc, const char *dir, int ar
 		}
 	}
 	if(!archiver){
-		fprintf(stderr,"7z.so could not open the file as any archive.\n");
+		fprintf(stderr,"7z.so could not open the file as any archive (possibly encrypted).\n");
 		sin.vt->Release(&sin);
 		lzmaClose7z();
 		return 1;
@@ -125,6 +86,7 @@ static int extract(const char *password,const char *arc, const char *dir, int ar
 	MakeSArchiveExtractCallbackBare((SArchiveExtractCallbackBare*)&sextract,(IInArchive_*)archiver,password);
 	sextract.argc = argc;
 	sextract.argv = argv;
+	sextract.dir = dir;
 	sextract.vt->GetStream = SArchiveExtractCallbackFileList_GetStream;
 	lzmaExtractArchive(archiver, NULL, -1, 0, (IArchiveExtractCallback_*)&sextract);
 
@@ -152,7 +114,7 @@ static int list(const char *password,const char *arc, int argc, const char **arg
 		}
 	}
 	if(!archiver){
-		fprintf(stderr,"7z.so could not open the file as any archive.\n");
+		fprintf(stderr,"7z.so could not open the file as any archive (possibly encrypted).\n");
 		sin.vt->Release(&sin);
 		lzmaClose7z();
 		return 1;
@@ -174,7 +136,8 @@ static int list(const char *password,const char *arc, int argc, const char **arg
 		lzmaGetArchiveFileProperty(archiver,i,kpidPackSize,&propPackedSize);
 		lzmaGetArchiveFileProperty(archiver,i,kpidSize,&propSize);
 		lzmaGetArchiveFileProperty(archiver,i,kpidSize,&propMTime); // displaying this to be implemented.
-		wcstombs(cbuf,propPath.bstrVal,BUFLEN);
+		cbuf[0]=0;
+		if(propPath.bstrVal)wcstombs(cbuf,propPath.bstrVal,BUFLEN);
 		if(!match(cbuf,argc,argv)){
 			printf("%-35ls %-20ls %10llu %10llu\n",propPath.bstrVal,propMethod.bstrVal,propPackedSize.uhVal,propSize.uhVal);
 		}
@@ -189,8 +152,83 @@ static int list(const char *password,const char *arc, int argc, const char **arg
 	return 0;
 }
 
+typedef struct{
+	IArchiveUpdateCallback_vt *vt;
+	u32 refs;
+	IInArchive_ *archiver;
+	u32 lastIndex;
+	int argc;
+	const char **argv;
+} SArchiveUpdateCallbackFileList;
+
+static HRESULT WINAPI SArchiveUpdateCallbackFileList_GetStream(void* _self, u32 index, /*ISequentialInStream_*/IInStream_ **inStream){
+	SArchiveUpdateCallbackFileList *self = (SArchiveUpdateCallbackFileList*)_self;
+	*inStream = NULL;
+	IOutStream_* stream = (IOutStream_*)calloc(1,sizeof(SOutStreamFile));
+	MakeSInStreamFile((SInStreamFile*)stream,self->argv[index]);
+	printf("Compressing %s...\n",self->argv[index]);
+	*inStream = stream; // WILL BE RELEASED AUTOMATICALLY.
+	return S_OK;
+}
+
+static HRESULT WINAPI SArchiveUpdateCallbackFileList_GetProperty(void* _self, u32 index, PROPID propID, PROPVARIANT *value){
+	SArchiveUpdateCallbackFileList *self = (SArchiveUpdateCallbackFileList*)_self;
+	//printf("%d %d\n",index,propID);
+	if(propID == kpidPath){
+		int len=strlen(self->argv[index]);
+		value->vt = VT_BSTR;
+		value->bstrVal = SysAllocStringLen(NULL,len);
+		mbstowcs(value->bstrVal, self->argv[index], len);
+	}else if(propID == kpidIsDir || propID == kpidIsAnti){
+		value->vt = VT_BOOL;
+		value->boolVal = VARIANT_FALSE;
+	}else if(propID == kpidSize){
+		value->vt = VT_UI8;
+		value->ulVal = 1; ///
+	}else if(propID == kpidMTime){
+		value->vt = VT_FILETIME;
+	}else if(propID == kpidAttrib){
+		value->vt = VT_UI4;
+	}
+	return S_OK;
+}
+
+static int add(const char *password,unsigned char arctype,int level,const char *arc, int argc, const char **argv){
+	// todo implement password
+	if(lzmaOpen7z()){
+		return -1;
+	}
+	void *archiver=NULL;
+	if(lzmaCreateArchiver(&archiver,arctype,1,level)){
+		fprintf(stderr,"7z.so does not have the encoder for this file type.\n");
+		lzmaClose7z();
+		return 1;
+	}
+	SOutStreamFile sout;
+	MakeSOutStreamFile(&sout,arc);
+	SArchiveUpdateCallbackFileList supdate;
+	MakeSArchiveUpdateCallbackBare((SArchiveUpdateCallbackBare*)&supdate,(IOutArchive_*)archiver);
+	supdate.argc = argc;
+	supdate.argv = argv;
+	supdate.vt->GetStream = SArchiveUpdateCallbackFileList_GetStream;
+	supdate.vt->GetProperty = SArchiveUpdateCallbackFileList_GetProperty;
+	int x=lzmaUpdateArchive(archiver,&sout,argc,&supdate);
+	//printf("finished %llx.\n",x);
+	lzmaDestroyArchiver(&archiver,1);
+	sout.vt->Release(&sout);
+	lzmaClose7z();
+
+	return 0;
+}
+
 int zun7z(int argc, const char **argv){
-  printf("7z Extractor\nUsage: zun7z [xl][PASSWORD] arc.7z [extract_dir] [filespec]\n\n");
+  printf(
+  	"7z Extractor\n"
+  	"Usage:\n"
+  	"zun7z [xl][PASSWORD] arc.7z [extract_dir] [filespec]\n"
+	"zun7z a TYPE LEVEL(-1) arc.7z [filespec]\n"
+  	"\n"
+  );
   if(argc<3)return -1;
   const char *w="*";
   
@@ -198,13 +236,16 @@ int zun7z(int argc, const char **argv){
 	case 'x':{
 		const char *password=argv[1]+1;
 		const char *arc=argv[2];
-		const char *dir=".";
+		const char *dir="./";
 		argv+=3;argc-=3;
 		if(argv[0]&&(LastByte(argv[0])=='/'||LastByte(argv[0])=='\\')){makedir(argv[0]);dir=argv[0];argv++;argc--;}
 		return extract(password,arc,dir,argc?argc:1,argc?argv:&w);
 	}
 	case 'l':return list(argv[1]+1,argv[2],argc-3?argc-3:1,argc-3?argv+3:&w);
+	case 'a':{
+		if(argc<5)return -1;
+		return add(argv[1]+1,strtol(argv[2],NULL,0),strtol(argv[3],NULL,10),argv[4],argc-5,argv+5);
+	}
 	default:return -1;
   }
 }
-
