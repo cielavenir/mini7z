@@ -3,7 +3,52 @@
 /// cannot handle multivolume archives ///
 
 #include "../lib/lzma.h"
-#include "../lib/xutil.h" // ismatchwildcard
+#include <string.h>
+
+bool wildmatch(const char *pattern, const char *compare){
+	switch(*pattern){
+		case '?': //0x3f
+			return *compare&&wildmatch(pattern+1,compare+1);
+		case '*': //0x2a
+			return wildmatch(pattern+1,compare)||(*compare&&wildmatch(pattern,compare+1));
+		default:
+			if(!*pattern&&!*compare)return true;
+			if(*pattern!=*compare)return false;
+			return wildmatch(pattern+1,compare+1);
+	}
+}
+
+bool matchwildcard2(const char *wildcard, const char *string, const int iMode){
+	int u=0,u1=0,u2=0;
+	char pattern[768];
+	char compare[768];
+	if(!wildcard||!string)return 0;
+	strcpy(pattern,wildcard);
+	strcpy(compare,string);
+
+	for(u=0;u<strlen(pattern);u++){
+		pattern[u]=upcase(pattern[u]);
+		if(pattern[u]=='\\')pattern[u]='/';
+		if(pattern[u]=='/')u1++;
+	}
+
+	for(u=0;u<strlen(compare);u++){
+		compare[u]=upcase(compare[u]);
+		if(compare[u]=='\\')compare[u]='/';
+		if(compare[u]=='/')u2++;
+	}
+
+	if(
+		(iMode==wildmode_string)||
+		(iMode==wildmode_samedir&&u1==u2)||
+		(iMode==wildmode_recursive&&u1<=u2)
+	)return wildmatch(pattern, compare);
+	return false;
+}
+
+bool matchwildcard(const char *wildcard, const char *string){
+	return matchwildcard2(wildcard, string, wildmode_string);
+}
 
 #include <stdio.h>
 //#include <stdlib.h>
