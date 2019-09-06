@@ -53,6 +53,8 @@ bool matchwildcard(const char *wildcard, const char *string){
 #include <stdio.h>
 //#include <stdlib.h>
 #include <string.h>
+#include <time.h>
+#include <sys/stat.h>
 
 static WORD LastByte(LPCSTR lpszStr){
 	int n=strlen(lpszStr);
@@ -94,7 +96,7 @@ static HRESULT WINAPI SArchiveExtractCallbackFileList_GetStream(void* _self, u32
 			printf("Extracting %s...\n",fname+dirlen);
 			makedir(fname);
 			IOutStream_* stream = (IOutStream_*)calloc(1,sizeof(SOutStreamFile));
-			MakeSOutStreamFile((SOutStreamFile*)stream,fname);
+			MakeSOutStreamFile((SOutStreamFile*)stream,fname,false);
 			*outStream = stream; // WILL BE RELEASED AUTOMATICALLY.
 		}
 	}
@@ -105,6 +107,7 @@ static HRESULT WINAPI SArchiveExtractCallbackFileList_GetStream(void* _self, u32
 
 static int extract(const char *password,const char *arc, const char *dir, int argc, const char **argv){
 	if(lzmaOpen7z()){
+		fprintf(stderr,"cannot load 7z.so.\n");
 		return -1;
 	}
 	lzmaLoadUnrar();
@@ -145,6 +148,7 @@ static int extract(const char *password,const char *arc, const char *dir, int ar
 
 static int list(const char *password,const char *arc, int argc, const char **argv){
 	if(lzmaOpen7z()){
+		fprintf(stderr,"cannot load 7z.so.\n");
 		return -1;
 	}
 	SInStreamFile sin;
@@ -167,8 +171,8 @@ static int list(const char *password,const char *arc, int argc, const char **arg
 	printf("arctype = %d .\n\n",arctype);
 	int num_items;
 	lzmaGetArchiveFileNum(archiver,(u32*)&num_items); // to deal with empty archive...
-	printf("Name                                Method               PackedSize Size      \n");
-	printf("----------------------------------- -------------------- ---------- ----------\n");
+	printf("Name                                     PackedSize Size       Time                Method              \n");
+	printf("---------------------------------------- ---------- ---------- ------------------- --------------------\n");
 	for(int i=0;i<num_items;i++){
 		PROPVARIANT propPath,propMethod,propPackedSize,propSize,propMTime;
 		memset(&propPath,0,sizeof(PROPVARIANT));
@@ -180,16 +184,25 @@ static int list(const char *password,const char *arc, int argc, const char **arg
 		lzmaGetArchiveFileProperty(archiver,i,kpidMethod,&propMethod);
 		lzmaGetArchiveFileProperty(archiver,i,kpidPackSize,&propPackedSize);
 		lzmaGetArchiveFileProperty(archiver,i,kpidSize,&propSize);
-		lzmaGetArchiveFileProperty(archiver,i,kpidSize,&propMTime); // displaying this to be implemented.
+		lzmaGetArchiveFileProperty(archiver,i,kpidMTime,&propMTime);
 		cbuf[0]=0;
 		if(propPath.bstrVal)wcstombs(cbuf,propPath.bstrVal,BUFLEN);
 		if(!match(cbuf,argc,argv)){
-			printf("%-35ls %-20ls %10llu %10llu\n",propPath.bstrVal,propMethod.bstrVal,propPackedSize.uhVal,propSize.uhVal);
+			time_t t = FileTimeToUTC(propMTime.filetime);
+			struct tm tt;
+#if defined(_WIN32) || (!defined(__GNUC__) && !defined(__clang__))
+			localtime_s(&tt,&t);
+			strftime(cbuf,99,"%Y-%m-%d %H:%M:%S",&tt);
+#else
+			localtime_r(&t,&tt);
+			strftime(cbuf,99,"%04Y-%02m-%02d %02H:%02M:%02S",&tt);
+#endif
+			printf("%-40ls %10llu %10llu %s %-20ls\n",propPath.bstrVal,propPackedSize.uhVal,propSize.uhVal,cbuf,propMethod.bstrVal);
 		}
 		PropVariantClear(&propPath);
 		PropVariantClear(&propMethod);
 	}
-	printf("----------------------------------- -------------------- ---------- ----------\n");
+	printf("---------------------------------------- ---------- ---------- ------------------- --------------------\n");
 	lzmaDestroyArchiver(&archiver,0);
 	sin.vt->Release(&sin);
 	lzmaClose7z();
@@ -200,7 +213,8 @@ static int list(const char *password,const char *arc, int argc, const char **arg
 typedef struct{
 	IArchiveUpdateCallback_vt *vt;
 	u32 refs;
-	IInArchive_ *archiver;
+	SCryptoGetTextPassword2Fixed setpassword;
+	IOutArchive_ *archiver;
 	u32 lastIndex;
 	int argc;
 	const char **argv;
@@ -229,11 +243,18 @@ static HRESULT WINAPI SArchiveUpdateCallbackFileList_GetProperty(void* _self, u3
 		value->boolVal = VARIANT_FALSE;
 	}else if(propID == kpidSize){
 		value->vt = VT_UI8;
-		value->ulVal = 1; ///
+		struct stat st;
+		stat(self->argv[index], &st);
+		//value->ulVal = 1; ///
+		value->ulVal = st.st_size;
 	}else if(propID == kpidMTime){
 		value->vt = VT_FILETIME;
+		struct stat st;
+		stat(self->argv[index], &st);
+		value->filetime = UTCToFileTime(st.st_mtime);
 	}else if(propID == kpidAttrib){
 		value->vt = VT_UI4;
+		value->uintVal = 0x20;
 	}
 	return S_OK;
 }
@@ -241,6 +262,7 @@ static HRESULT WINAPI SArchiveUpdateCallbackFileList_GetProperty(void* _self, u3
 static int add(const char *password,unsigned char arctype,int level,const char *arc, int argc, const char **argv){
 	// todo implement password
 	if(lzmaOpen7z()){
+		fprintf(stderr,"cannot load 7z.so.\n");
 		return -1;
 	}
 	void *archiver=NULL;
@@ -250,9 +272,9 @@ static int add(const char *password,unsigned char arctype,int level,const char *
 		return 1;
 	}
 	SOutStreamFile sout;
-	MakeSOutStreamFile(&sout,arc);
+	MakeSOutStreamFile(&sout,arc,false); //true); /// todo implement GetUpdateItemInfo properly
 	SArchiveUpdateCallbackFileList supdate;
-	MakeSArchiveUpdateCallbackBare((SArchiveUpdateCallbackBare*)&supdate,(IOutArchive_*)archiver);
+	MakeSArchiveUpdateCallbackBare((SArchiveUpdateCallbackBare*)&supdate,(IOutArchive_*)archiver,password&&*password?password:NULL);
 	supdate.argc = argc;
 	supdate.argv = argv;
 	supdate.vt->GetStream = SArchiveUpdateCallbackFileList_GetStream;
@@ -271,7 +293,8 @@ int zun7z(int argc, const char **argv){
   	"7z Extractor\n"
   	"Usage:\n"
   	"zun7z [xl][PASSWORD] arc.7z [extract_dir] [filespec]\n"
-	"zun7z a TYPE LEVEL(-1) arc.7z [filespec]\n"
+	"zun7z a[PASSWORD] TYPE LEVEL(-1) arc.7z [filespec] (cannot handle wildcard nor directories)\n"
+	"(possibly) find filespec -type f | xargs zun7z a 7 9 arc.7z\n"
   	"\n"
   );
   if(argc<3)return -1;
