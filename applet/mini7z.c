@@ -1,54 +1,9 @@
-/// zun7z - lzmasdk.c example to extract archives supported by 7z.so ///
+/// mini7z - lzmasdk.c example to extract archives supported by 7z.so ///
 /// multibyte filenames are not tested ///
 /// cannot handle multivolume archives ///
 
 #include "../lib/lzma.h"
-#include <string.h>
-
-bool wildmatch(const char *pattern, const char *compare){
-	switch(*pattern){
-		case '?': //0x3f
-			return *compare&&wildmatch(pattern+1,compare+1);
-		case '*': //0x2a
-			return wildmatch(pattern+1,compare)||(*compare&&wildmatch(pattern,compare+1));
-		default:
-			if(!*pattern&&!*compare)return true;
-			if(*pattern!=*compare)return false;
-			return wildmatch(pattern+1,compare+1);
-	}
-}
-
-bool matchwildcard2(const char *wildcard, const char *string, const int iMode){
-	int u=0,u1=0,u2=0;
-	char pattern[768];
-	char compare[768];
-	if(!wildcard||!string)return 0;
-	strcpy(pattern,wildcard);
-	strcpy(compare,string);
-
-	for(u=0;u<strlen(pattern);u++){
-		pattern[u]=upcase(pattern[u]);
-		if(pattern[u]=='\\')pattern[u]='/';
-		if(pattern[u]=='/')u1++;
-	}
-
-	for(u=0;u<strlen(compare);u++){
-		compare[u]=upcase(compare[u]);
-		if(compare[u]=='\\')compare[u]='/';
-		if(compare[u]=='/')u2++;
-	}
-
-	if(
-		(iMode==wildmode_string)||
-		(iMode==wildmode_samedir&&u1==u2)||
-		(iMode==wildmode_recursive&&u1<=u2)
-	)return wildmatch(pattern, compare);
-	return false;
-}
-
-bool matchwildcard(const char *wildcard, const char *string){
-	return matchwildcard2(wildcard, string, wildmode_string);
-}
+#include "../lib/xutil.h" // ismatchwildcard
 
 #include <stdio.h>
 //#include <stdlib.h>
@@ -192,11 +147,10 @@ static int list(const char *password,const char *arc, int argc, const char **arg
 			struct tm tt;
 #if defined(_WIN32) || (!defined(__GNUC__) && !defined(__clang__))
 			localtime_s(&tt,&t);
-			strftime(cbuf,99,"%Y-%m-%d %H:%M:%S",&tt);
 #else
 			localtime_r(&t,&tt);
-			strftime(cbuf,99,"%04Y-%02m-%02d %02H:%02M:%02S",&tt);
 #endif
+			strftime(cbuf,99,"%Y-%m-%d %H:%M:%S",&tt);
 			printf("%-40ls %10llu %10llu %s %-20ls\n",propPath.bstrVal,propPackedSize.uhVal,propSize.uhVal,cbuf,propMethod.bstrVal);
 		}
 		PropVariantClear(&propPath);
@@ -288,13 +242,18 @@ static int add(const char *password,unsigned char arctype,int level,const char *
 	return 0;
 }
 
-int zun7z(int argc, const char **argv){
+#ifdef STANDALONE
+unsigned char buf[BUFLEN];
+int main(int argc, const char **argv){
+#else
+int mini7z(int argc, const char **argv){
+#endif
   printf(
   	"7z Extractor\n"
   	"Usage:\n"
-  	"zun7z [xl][PASSWORD] arc.7z [extract_dir] [filespec]\n"
-	"zun7z a[PASSWORD] TYPE LEVEL(-1) arc.7z [filespec] (cannot handle wildcard nor directories)\n"
-	"(possibly) find filespec -type f | xargs zun7z a 7 9 arc.7z\n"
+  	"mini7z [xl][PASSWORD] arc.7z [extract_dir] [filespec]\n"
+	"mini7z a[PASSWORD] TYPE LEVEL(-1) arc.7z [filespec] (cannot handle wildcard nor directories)\n"
+	"(possibly) find filespec -type f | xargs mini7z a 7 9 arc.7z\n"
   	"\n"
   );
   if(argc<3)return -1;
