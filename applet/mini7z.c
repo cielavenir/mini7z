@@ -177,7 +177,7 @@ typedef struct{
 static HRESULT WINAPI SArchiveUpdateCallbackFileList_GetStream(void* _self, u32 index, /*ISequentialInStream_*/IInStream_ **inStream){
 	SArchiveUpdateCallbackFileList *self = (SArchiveUpdateCallbackFileList*)_self;
 	*inStream = NULL;
-	IOutStream_* stream = (IOutStream_*)calloc(1,sizeof(SOutStreamFile));
+	IInStream_* stream = (IInStream_*)calloc(1,sizeof(SInStreamFile));
 	MakeSInStreamFile((SInStreamFile*)stream,self->argv[index]);
 	printf("Compressing %s...\n",self->argv[index]);
 	*inStream = stream; // WILL BE RELEASED AUTOMATICALLY.
