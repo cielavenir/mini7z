@@ -1,6 +1,7 @@
 #include "../compat.h"
 #include <string.h>
 #include <stdlib.h>
+#include <ctype.h>
 #include "xutil.h"
 
 unsigned long long int read64(const void *p){
