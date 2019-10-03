@@ -220,7 +220,7 @@ size_t ucs2tombs(unsigned char* dst, const unsigned short* src){
 }
 
 void NullMemory(void* buf, unsigned int n){
-        while(n)((char*)buf)[--n]=0;
+	while(n)((char*)buf)[--n]=0;
 }
 
 int memcmp_fast(const void *x,const void *y,unsigned int n){
