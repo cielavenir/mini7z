@@ -1,3 +1,6 @@
+#ifndef _LZMA_IOSTREAM_H_
+#define _LZMA_IOSTREAM_H_
+
 #include <iostream>
 #include "lzma.h"
 
@@ -27,3 +30,5 @@ typedef struct{
 } SArchiveExtractCallbackOS;
 
 bool MakeSArchiveExtractCallbackOS(SArchiveExtractCallbackOS *self, IInArchive_ *archiver, const char *password);
+
+#endif

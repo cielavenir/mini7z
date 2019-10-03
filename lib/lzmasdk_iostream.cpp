@@ -2,6 +2,7 @@
 #include "lzma_iostream.h"
 
 extern const IID IID_IInStream_;
+
 static HRESULT WINAPI SInStreamIS_QueryInterface(void* _self, const GUID* iid, void** out_obj){
     LZMA_UNUSED SInStreamIS* self = (SInStreamIS*)_self;
     if(!memcmp(iid,&IID_IInStream_,sizeof(GUID))){
