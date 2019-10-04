@@ -1,6 +1,5 @@
-/// mini7z - lzmasdk.c example to extract archives supported by 7z.so ///
+/// mini7z - minimalistic 7z.dll client written in C ///
 /// multibyte filenames are not tested ///
-/// cannot handle multivolume archives ///
 
 #include "../lib/lzma.h"
 #include "../lib/xutil.h" // ismatchwildcard
@@ -73,7 +72,7 @@ static int extract(const char *password,const char *arc, const char *dir, int ar
 	for(;arctype<0xff;arctype++){
 		if(!lzmaCreateArchiver(&archiver,arctype,0,0)){
 			sin.vt->Seek(&sin,0,SEEK_SET,NULL); // archiver should do this automatically lol lol lol
-			if(!lzmaOpenArchive(archiver,&sin,password))break;
+			if(!lzmaOpenArchive(archiver,&sin,password,arc))break;
 			lzmaDestroyArchiver(&archiver,0);
 		}
 	}
@@ -113,7 +112,7 @@ static int list(const char *password,const char *arc, int argc, const char **arg
 	for(;arctype<0xff;arctype++){
 		if(!lzmaCreateArchiver(&archiver,arctype,0,0)){
 			sin.vt->Seek(&sin,0,SEEK_SET,NULL); // archiver should do this automatically lol lol lol
-			if(!lzmaOpenArchive(archiver,&sin,password))break;
+			if(!lzmaOpenArchive(archiver,&sin,password,arc))break;
 			lzmaDestroyArchiver(&archiver,0);
 		}
 	}
@@ -178,7 +177,7 @@ static HRESULT WINAPI SArchiveUpdateCallbackFileList_GetStream(void* _self, u32 
 	SArchiveUpdateCallbackFileList *self = (SArchiveUpdateCallbackFileList*)_self;
 	*inStream = NULL;
 	IInStream_* stream = (IInStream_*)calloc(1,sizeof(SInStreamFile));
-	MakeSInStreamFile((SInStreamFile*)stream,self->argv[index]);
+	if(!MakeSInStreamFile((SInStreamFile*)stream,self->argv[index])){free(stream);return E_FAIL;}
 	printf("Compressing %s...\n",self->argv[index]);
 	*inStream = stream; // WILL BE RELEASED AUTOMATICALLY.
 	return S_OK;
