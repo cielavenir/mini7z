@@ -150,7 +150,7 @@ static int list(const char *password,const char *arc, int argc, const char **arg
 			localtime_r(&t,&tt);
 #endif
 			strftime(cbuf,99,"%Y-%m-%d %H:%M:%S",&tt);
-			printf("%-40ls %10llu %10llu %s %-20ls\n",propPath.bstrVal,propPackedSize.uhVal,propSize.uhVal,cbuf,propMethod.bstrVal);
+			printf("%-40ls %10llu %10llu %s %-20ls\n",propPath.bstrVal,propPackedSize.uhVal.QuadPart,propSize.uhVal.QuadPart,cbuf,propMethod.bstrVal);
 		}
 		PropVariantClear(&propPath);
 		PropVariantClear(&propMethod);
@@ -199,7 +199,7 @@ static HRESULT WINAPI SArchiveUpdateCallbackFileList_GetProperty(void* _self, u3
 		struct stat st;
 		stat(self->argv[index], &st);
 		//value->ulVal = 1; ///
-		value->ulVal = st.st_size;
+		value->uhVal.QuadPart = st.st_size;
 	}else if(propID == kpidMTime){
 		value->vt = VT_FILETIME;
 		struct stat st;
@@ -232,8 +232,7 @@ static int add(const char *password,unsigned char arctype,int level,const char *
 	supdate.argv = argv;
 	supdate.vt->GetStream = SArchiveUpdateCallbackFileList_GetStream;
 	supdate.vt->GetProperty = SArchiveUpdateCallbackFileList_GetProperty;
-	int x=lzmaUpdateArchive(archiver,&sout,argc,&supdate);
-	//printf("finished %llx.\n",x);
+	lzmaUpdateArchive(archiver,&sout,argc,&supdate);
 	lzmaDestroyArchiver(&archiver,1);
 	sout.vt->Release(&sout);
 	lzmaClose7z();
