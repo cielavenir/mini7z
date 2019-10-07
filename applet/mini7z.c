@@ -150,7 +150,7 @@ static int list(const char *password,const char *arc, int argc, const char **arg
 			localtime_r(&t,&tt);
 #endif
 			strftime(cbuf,99,"%Y-%m-%d %H:%M:%S",&tt);
-			printf("%-40ls %10llu %10llu %s %-20ls\n",propPath.bstrVal,propPackedSize.uhVal.QuadPart,propSize.uhVal.QuadPart,cbuf,propMethod.bstrVal);
+			printf("%-40ls %10"LLU" %10"LLU" %s %-20ls\n",propPath.bstrVal,propPackedSize.uhVal.QuadPart,propSize.uhVal.QuadPart,cbuf,propMethod.bstrVal);
 		}
 		PropVariantClear(&propPath);
 		PropVariantClear(&propMethod);
