@@ -213,7 +213,6 @@ static HRESULT WINAPI SArchiveUpdateCallbackFileList_GetProperty(void* _self, u3
 }
 
 static int add(const char *password,unsigned char arctype,int level,const char *arc, int argc, const char **argv){
-	// todo implement password
 	if(lzmaOpen7z()){
 		fprintf(stderr,"cannot load 7z.so.\n");
 		return -1;
