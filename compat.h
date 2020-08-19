@@ -73,7 +73,7 @@ typedef long long s64;
 
 	#include <fcntl.h>
 	#ifndef NODLOPEN //dynamic load
-	#if defined(__linux__) && !defined(_GNU_SOURCE)
+	#if defined(__linux__) && !defined(_GNU_SOURCE) && !defined(DL_ANDROID)
 		typedef struct{
 			const char *dli_fname;        /* File name of defining object.  */
 			void *dli_fbase;              /* Load address of that object.  */

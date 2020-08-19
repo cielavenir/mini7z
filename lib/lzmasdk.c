@@ -884,11 +884,6 @@ int lzmaOpen7z(){
 	if(!h7z)h7z=LoadLibraryA("7z.so"); // last resort using LD_LIBRARY_PATH
 	if(!h7z)h7z=LoadLibraryA("7z.dylib");
 #endif
-	if(h7z){
-		//char path[768];
-		//GetModuleFileNameA(h7z,path,768);
-		//fprintf(stderr,"7-zip implementation: %s\n",path);
-	}
 #endif
 	if(!h7z)return 1;
 
@@ -910,6 +905,18 @@ int lzmaOpen7z(){
 		h7z=NULL;
 		return 2;
 	}
+
+	if(h7z){
+		//char path[768];
+#if 0
+//defined(DL_ANDROID)
+		//GetModuleFileNameA(pCreateArchiver,path,768);
+#else
+		//GetModuleFileNameA(h7z,path,768);
+#endif
+		//fprintf(stderr,"7-zip implementation: %s\n",path);
+	}
+
 	return 0; //now you can call 7z.so.
 }
 bool lzma7zAlive(){
@@ -1250,7 +1257,12 @@ int lzmaLoadUnrar(){
 #else
 		{
 			char path[768];
+#if 0
+//defined(DL_ANDROID)
+			GetModuleFileNameA(pCreateArchiver,path,768);
+#else
 			GetModuleFileNameA(h7z,path,768);
+#endif
 			int i=strlen(path)-1;
 			for(;i>=0;i--)if(path[i]=='/'||path[i]=='\\')break;
 			i+=1;

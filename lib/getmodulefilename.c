@@ -1,5 +1,7 @@
 #include "../compat.h"
+#include "xutil.h" // myfgets
 #include <string.h>
+#include <dirent.h>
 
 #if defined(__APPLE__)
 #include <mach-o/dyld.h>
@@ -38,6 +40,72 @@ int GetModuleFileNameA(void *hModule,char *pFilename,int nSize){
 			memcpy(pFilename,image_name,nCopy);
 			return nCopy;
 		}
+	}
+//#elif defined(__linux__)
+#elif defined(DL_ANDROID)
+#if 0
+	// workaround to make whole program working.
+	// hModule must be function address...
+	// [note] keep this code commented for later use, where all proposed method might not work
+	Dl_info info;
+	dladdr(hModule, &info);
+	if(info.dli_fname){
+		int s = strlen(info.dli_fname);
+		int nCopy = min(nSize,s+1);
+		memcpy(pFilename,info.dli_fname,nCopy);
+		return nCopy;
+	}
+#endif
+	// be careful that this filename is fully resolved (while dlinfo method resolves only directory name).
+	// this can give different filename in dladdr. file sameness should be checked via st_ino, not via filename itself.
+	char image_name[768];
+	image_name[0]=0;
+	DIR *d=opendir("/proc/self/map_files");
+	if(d){
+		struct dirent *ent;
+		while(ent=readdir(d)){
+			if(!strcmp(ent->d_name,".")||!strcmp(ent->d_name,".."))continue;
+			char x[768];
+			sprintf(x,"/proc/self/map_files/%s",ent->d_name);
+			size_t siz=readlink(x,image_name,768);
+			if(1<=siz && siz<768){
+				image_name[siz]=0;
+				void* probe_handle = dlopen(image_name, RTLD_LAZY);
+				if(probe_handle){
+					dlclose(probe_handle);
+					if(hModule == probe_handle)break;
+				}
+			}
+			image_name[0]=0;
+		}
+		closedir(d);
+	}
+	// it might be possible that opendir succeeds and readdir fails. so using "else" is not ok here.
+	if(!image_name[0]){
+		FILE *f = fopen("/proc/self/maps","r");
+		if(f){
+			char line[1024];
+			while(myfgets(line,1024,f)){
+				int s=strlen(line);
+				for(;s>=1&&line[s-1]!=' ';)s--;
+				if(strstr(line+s,".so")){
+					strcpy(image_name,line+s);
+					void* probe_handle = dlopen(image_name, RTLD_LAZY);
+					if(probe_handle){
+						dlclose(probe_handle);
+						if(hModule == probe_handle)break;
+					}
+					image_name[0]=0;
+				}
+			}
+			fclose(f);
+		}
+	}
+	if(image_name[0]){
+		int s = strlen(image_name);
+		int nCopy = min(nSize,s+1);
+		memcpy(pFilename,image_name,nCopy);
+		return nCopy;
 	}
 #elif defined(__linux__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__) || defined(__bsdi__) || defined(__DragonFly__)
 	struct link_map *lm=NULL;
