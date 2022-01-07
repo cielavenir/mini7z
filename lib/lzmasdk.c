@@ -6,7 +6,10 @@
 // STDMETHOD is virtual __stdcall (or __cdecl), so it can be called from C if the interface is properly aligned.
 
 #include "lzma.h"
+#include "scv.h"
 #include <string.h>
+#include <stdlib.h> // getenv
+#include <dirent.h>
 
 #ifndef wchar_t
 #include <wchar.h>
@@ -859,6 +862,7 @@ int lzmaOpen7z(){
 
 	h7z=NULL;
 #ifndef NODLOPEN
+	//if(!h7z && getenv("MINI7Z_IMPL"))h7z=LoadLibraryA(getenv("MINI7Z_IMPL"));
 #if defined(_WIN32) || (!defined(__GNUC__) && !defined(__clang__))
 	if(!h7z)h7z=LoadLibraryA("C:\\Program Files\\7-Zip\\7z.dll");
 	if(!h7z)h7z=LoadLibraryA("C:\\Program Files (x86)\\7-Zip\\7z.dll");
@@ -867,6 +871,7 @@ int lzmaOpen7z(){
 	if(!h7z)h7z=LoadLibraryA("7z32.dll"); // lol...
 #else
 	if(!h7z)h7z=LoadLibraryA("/usr/local/opt/p7zip/lib/p7zip/7z.so"); //Homebrew
+	if(!h7z)h7z=LoadLibraryA("/opt/homebrew/opt/p7zip/lib/p7zip/7z.so");
 	if(!h7z)h7z=LoadLibraryA("/opt/local/lib/p7zip/7z.so"); //MacPorts
 	if(!h7z)h7z=LoadLibraryA("/sw/lib/p7zip/7z.so"); //Fink
 	if(!h7z)h7z=LoadLibraryA("/home/linuxbrew/.linuxbrew/lib/p7zip/7z.so");
@@ -1182,79 +1187,121 @@ int lzmaCodeCallback(void *coder, void *hin, tRead pRead_in, tClose pClose_in, v
 		return 0;
 }
 
+#if defined(_WIN32) || (!defined(__GNUC__) && !defined(__clang__))
+#else
+typedef void* HMODULE;
+#endif
+
 typedef struct{
 	ICompressCodecsInfo_vt *vt;
 	u32 refs;
 
-	// todo make this array to support multiple codecs (without std::vector, how can I?).
-#if defined(_WIN32) || (!defined(__GNUC__) && !defined(__clang__))
-	HMODULE hRar;
-#else
-	void *hRar;
-#endif
-	funcGetNumMethods pGetNumMethods;
-	funcGetProperty pGetProperty;
-	funcCreateDecoder pCreateDecoder;
-	funcCreateEncoder pCreateEncoder;
-} SCompressCodecsInfoRar;
-static SCompressCodecsInfoRar scoder; // for now expect to be placed BSS.
+	struct scv_vector *vCodecs;
+	struct scv_vector *vNumMethods;
+	struct scv_vector *vGetProperty;
+	struct scv_vector *vCreateDecoder;
+	struct scv_vector *vCreateEncoder;
+} SCompressCodecsInfoExternal_;
+static SCompressCodecsInfoExternal_ scoder = {NULL, 0, NULL, NULL, NULL, NULL, NULL};
 
-static HRESULT SCompressCodecsInfoRar_QueryInterface(void* _self, const GUID* iid, void** out_obj){
-	LZMA_UNUSED SCompressCodecsInfoRar *self = (SCompressCodecsInfoRar*)_self;
+static HRESULT SCompressCodecsInfoExternal_QueryInterface(void* _self, const GUID* iid, void** out_obj){
+	LZMA_UNUSED SCompressCodecsInfoExternal_ *self = (SCompressCodecsInfoExternal_*)_self;
 	*out_obj = NULL;
 	return E_NOINTERFACE;
 }
 
-static u32 WINAPI SCompressCodecsInfoRar_AddRef(void* _self){
-	LZMA_UNUSED SCompressCodecsInfoRar *self = (SCompressCodecsInfoRar*)_self;
+static u32 WINAPI SCompressCodecsInfoExternal_AddRef(void* _self){
+	LZMA_UNUSED SCompressCodecsInfoExternal_ *self = (SCompressCodecsInfoExternal_*)_self;
 	return ++self->refs;
 }
 
-static u32 WINAPI SCompressCodecsInfoRar_Release(void* _self){
-	LZMA_UNUSED SCompressCodecsInfoRar *self = (SCompressCodecsInfoRar*)_self;
+static u32 WINAPI SCompressCodecsInfoExternal_Release(void* _self){
+	LZMA_UNUSED SCompressCodecsInfoExternal_ *self = (SCompressCodecsInfoExternal_*)_self;
 	if(--self->refs==0){
 		pSetCodecs(NULL);
 		free(self->vt);
 		self->vt=NULL;
-		self->pGetNumMethods=NULL;
-		self->pGetProperty=NULL;
-		self->pCreateEncoder=NULL;
-		self->pCreateDecoder=NULL;
-		if(self->hRar)FreeLibrary(self->hRar);
-		self->hRar=NULL;
+		if(self->vCodecs){
+			size_t n = scv_size(self->vCodecs);
+			for(size_t i=0; i<n; i++){
+				FreeLibrary(*(HMODULE*)scv_at(self->vCodecs, i));
+			}
+			scv_delete(self->vCodecs);
+			self->vCodecs = NULL;
+		}
+		if(self->vNumMethods)scv_delete(self->vNumMethods);
+		self->vNumMethods=NULL;
+		if(self->vGetProperty)scv_delete(self->vGetProperty);
+		self->vGetProperty=NULL;
+		if(self->vCreateEncoder)scv_delete(self->vCreateEncoder);
+		self->vCreateEncoder=NULL;
+		if(self->vCreateDecoder)scv_delete(self->vCreateDecoder);
+		self->vCreateDecoder=NULL;
 	}
 	return self->refs;
 }
 
-static HRESULT WINAPI SCompressCodecsInfoRar_GetNumMethods(void* _self, u32 *numMethods){
-	LZMA_UNUSED SCompressCodecsInfoRar *self = (SCompressCodecsInfoRar*)_self;
-	return self->pGetNumMethods(numMethods);
+static HRESULT WINAPI SCompressCodecsInfoExternal_GetNumMethods(void* _self, u32 *numMethods){
+	LZMA_UNUSED SCompressCodecsInfoExternal_ *self = (SCompressCodecsInfoExternal_*)_self;
+	size_t n = scv_size(self->vNumMethods);
+	*numMethods = 0;
+	for(size_t i=0; i<n; i++){
+		*numMethods += *(u32*)scv_at(self->vNumMethods, i);
+	}
+	return S_OK;
 }
 
-static HRESULT WINAPI SCompressCodecsInfoRar_GetProperty(void* _self, u32 index, PROPID propID, PROPVARIANT *value){
-	LZMA_UNUSED SCompressCodecsInfoRar *self = (SCompressCodecsInfoRar*)_self;
-	return self->pGetProperty(index,propID,value);
+static HRESULT WINAPI SCompressCodecsInfoExternal_GetProperty(void* _self, u32 index, PROPID propID, PROPVARIANT *value){
+	LZMA_UNUSED SCompressCodecsInfoExternal_ *self = (SCompressCodecsInfoExternal_*)_self;
+	size_t n = scv_size(self->vNumMethods);
+	for(size_t i=0; i<n; i++){
+		u32 numMethods = *(u32*)scv_at(self->vNumMethods, i);
+		if(numMethods>index){
+			return (*(funcGetProperty*)scv_at(self->vGetProperty, i))(index,propID,value);
+		}
+		index -= numMethods;
+	}
+	return E_FAIL;
 }
 
-static HRESULT WINAPI SCompressCodecsInfoRar_CreateDecoder(void* _self, u32 index, const GUID *iid, void **coder){
-	LZMA_UNUSED SCompressCodecsInfoRar *self = (SCompressCodecsInfoRar*)_self;
-	return self->pCreateDecoder(index,iid,coder);
+static HRESULT WINAPI SCompressCodecsInfoExternal_CreateDecoder(void* _self, u32 index, const GUID *iid, void **coder){
+	LZMA_UNUSED SCompressCodecsInfoExternal_ *self = (SCompressCodecsInfoExternal_*)_self;
+	size_t n = scv_size(self->vNumMethods);
+	for(size_t i=0; i<n; i++){
+		u32 numMethods = *(u32*)scv_at(self->vNumMethods, i);
+		if(numMethods>index){
+			return (*(funcCreateDecoder*)scv_at(self->vCreateDecoder, i))(index,iid,coder);
+		}
+		index -= numMethods;
+	}
+	return E_FAIL;
 }
 
-static HRESULT WINAPI SCompressCodecsInfoRar_CreateEncoder(void* _self, u32 index, const GUID *iid, void **coder){
-	LZMA_UNUSED SCompressCodecsInfoRar *self = (SCompressCodecsInfoRar*)_self;
-	return self->pCreateEncoder(index,iid,coder);
+static HRESULT WINAPI SCompressCodecsInfoExternal_CreateEncoder(void* _self, u32 index, const GUID *iid, void **coder){
+	LZMA_UNUSED SCompressCodecsInfoExternal_ *self = (SCompressCodecsInfoExternal_*)_self;
+	size_t n = scv_size(self->vNumMethods);
+	for(size_t i=0; i<n; i++){
+		u32 numMethods = *(u32*)scv_at(self->vNumMethods, i);
+		if(numMethods>index){
+			return (*(funcCreateEncoder*)scv_at(self->vCreateEncoder, i))(index,iid,coder);
+		}
+		index -= numMethods;
+	}
+	return E_FAIL;
 }
 
-int lzmaLoadUnrar(){
+int lzmaLoadExternalCodecs(){
 	if(!lzma7zAlive())return E_FAIL;
 	if(!pSetCodecs)return E_FAIL;
 	if(!scoder.refs){
-		scoder.hRar = NULL;
-#ifndef NODLOPEN
-#if defined(_WIN32) || (!defined(__GNUC__) && !defined(__clang__))
-		//Rar codecs are bundled inside 7z.dll.
+#ifdef NODLOPEN
+		return E_FAIL;
 #else
+		scoder.vCodecs = scv_new(sizeof(HMODULE), 0);
+		scoder.vNumMethods = scv_new(sizeof(u32), 0);
+		scoder.vGetProperty = scv_new(sizeof(void*), 0);
+		scoder.vCreateDecoder = scv_new(sizeof(void*), 0);
+		scoder.vCreateEncoder = scv_new(sizeof(void*), 0);
 		{
 			char path[768];
 #if 0
@@ -1266,34 +1313,55 @@ int lzmaLoadUnrar(){
 			int i=strlen(path)-1;
 			for(;i>=0;i--)if(path[i]=='/'||path[i]=='\\')break;
 			i+=1;
-			strcpy(path+i,"Codecs/Rar.so");
-			scoder.hRar=LoadLibraryA(path);
+			strcpy(path+i,"Codecs/");
+			char *basename = path+strlen(path);
+			DIR *d=opendir(path);
+			if(d){
+				struct dirent *ent;
+				while(ent=readdir(d)){
+					strcpy(basename,ent->d_name);
+					HMODULE h=LoadLibraryA(path);
+					if(h){
+						funcGetNumMethods pGetNumMethods = (funcGetNumMethods)GetProcAddress(h,"GetNumberOfMethods");
+						funcGetProperty pGetProperty = (funcGetProperty)GetProcAddress(h,"GetMethodProperty");
+						funcCreateDecoder pCreateDecoder = (funcCreateDecoder)GetProcAddress(h,"CreateDecoder");
+						funcCreateEncoder pCreateEncoder = (funcCreateEncoder)GetProcAddress(h,"CreateEncoder");
+						if(pGetNumMethods && pGetProperty && pCreateDecoder && pCreateEncoder){
+							u32 numMethods = 0;
+							HRESULT ret = pGetNumMethods(&numMethods);
+							if(ret == S_OK){
+								scv_push_back(scoder.vCodecs, &h);
+								scv_push_back(scoder.vNumMethods, &numMethods);
+								scv_push_back(scoder.vGetProperty, &pGetProperty);
+								scv_push_back(scoder.vCreateDecoder, &pCreateDecoder);
+								scv_push_back(scoder.vCreateEncoder, &pCreateEncoder);
+							}else{
+								FreeLibrary(h);
+							}
+						}else{
+							FreeLibrary(h);
+						}
+					}
+				}
+			}
 		}
-		if(!scoder.hRar)return E_FAIL;
 		scoder.vt = (ICompressCodecsInfo_vt*)calloc(1,sizeof(ICompressCodecsInfo_vt));
-		scoder.vt->QueryInterface = SCompressCodecsInfoRar_QueryInterface;
-		scoder.vt->AddRef = SCompressCodecsInfoRar_AddRef;
-		scoder.vt->Release = SCompressCodecsInfoRar_Release;
-		scoder.vt->GetNumMethods = SCompressCodecsInfoRar_GetNumMethods;
-		scoder.vt->GetProperty = SCompressCodecsInfoRar_GetProperty;
-		scoder.vt->CreateDecoder = SCompressCodecsInfoRar_CreateDecoder;
-		scoder.vt->CreateEncoder = SCompressCodecsInfoRar_CreateEncoder;
-		scoder.pGetNumMethods = (funcGetNumMethods)GetProcAddress(scoder.hRar,"GetNumberOfMethods");
-		scoder.pGetProperty = (funcGetProperty)GetProcAddress(scoder.hRar,"GetMethodProperty");
-		scoder.pCreateDecoder = (funcCreateDecoder)GetProcAddress(scoder.hRar,"CreateDecoder");
-		scoder.pCreateEncoder = (funcCreateEncoder)GetProcAddress(scoder.hRar,"CreateEncoder");
+		scoder.vt->QueryInterface = SCompressCodecsInfoExternal_QueryInterface;
+		scoder.vt->AddRef = SCompressCodecsInfoExternal_AddRef;
+		scoder.vt->Release = SCompressCodecsInfoExternal_Release;
+		scoder.vt->GetNumMethods = SCompressCodecsInfoExternal_GetNumMethods;
+		scoder.vt->GetProperty = SCompressCodecsInfoExternal_GetProperty;
+		scoder.vt->CreateDecoder = SCompressCodecsInfoExternal_CreateDecoder;
+		scoder.vt->CreateEncoder = SCompressCodecsInfoExternal_CreateEncoder;
 		pSetCodecs((ICompressCodecsInfo_*)&scoder);
-#endif
-		return E_FAIL;
 #endif
 	}
 	scoder.refs++;
 	return S_OK;
 }
 
-int lzmaUnloadUnrar(){
+int lzmaUnloadExternalCodecs(){
 	if(!scoder.refs)return 1;
-	if(!scoder.hRar){scoder.refs--;return 0;}
 	scoder.vt->Release(&scoder);
 	return 0;
 }

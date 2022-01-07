@@ -7,7 +7,6 @@ extern "C"{
 
 #include "../compat.h"
 #include <stdio.h>
-#include <stdlib.h> // getenv
 #include <stdbool.h>
 
 #include "memstream.h"
@@ -553,8 +552,8 @@ typedef struct{
 
 bool MakeSArchiveUpdateCallbackBare(SArchiveUpdateCallbackBare *self, IOutArchive_ *archiver, const char *password);
 
-int lzmaLoadUnrar();
-int lzmaUnloadUnrar();
+int lzmaLoadExternalCodecs();
+int lzmaUnloadExternalCodecs();
 
 unsigned long long FileTimeToUTC(const FILETIME in);
 FILETIME UTCToFileTime(const unsigned long long UTC);

@@ -5,7 +5,7 @@
 #include "../lib/xutil.h" // ismatchwildcard
 
 #include <stdio.h>
-//#include <stdlib.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include <sys/stat.h>
@@ -64,7 +64,7 @@ static int extract(const char *password,const char *arc, const char *dir, int ar
 		fprintf(stderr,"cannot load 7z.so.\n");
 		return -1;
 	}
-	lzmaLoadUnrar();
+	lzmaLoadExternalCodecs();
 	SInStreamFile sin;
 	MakeSInStreamFile(&sin,arc);
 	void *archiver=NULL;
@@ -94,7 +94,7 @@ static int extract(const char *password,const char *arc, const char *dir, int ar
 
 	lzmaDestroyArchiver(&archiver,0);
 	sin.vt->Release(&sin);
-	lzmaUnloadUnrar();
+	lzmaUnloadExternalCodecs();
 	lzmaClose7z();
 
 	return 0;
@@ -239,6 +239,70 @@ static int add(const char *password,unsigned char arctype,int level,const char *
 	return 0;
 }
 
+// 7zip/Guid.txt
+// ruby -nae 'puts "\"0x%s %3d %s\\n\""%[$F[0],$F[0].to_i(16),$F[1]] if $F.size==2'
+
+static int info(){
+	fprintf(stderr,
+"known archive types:\n"
+"0x01   1 Zip\n"
+"0x02   2 BZip2\n"
+"0x03   3 Rar\n"
+"0x04   4 Arj\n"
+"0x05   5 Z\n"
+"0x06   6 Lzh\n"
+"0x07   7 7z\n"
+"0x08   8 Cab\n"
+"0x09   9 Nsis\n"
+"0x0A  10 lzma\n"
+"0x0B  11 lzma86\n"
+"0x0C  12 xz\n"
+"0x0D  13 ppmd\n"
+"0xC6 198 COFF\n"
+"0xC7 199 Ext\n"
+"0xC8 200 VMDK\n"
+"0xC9 201 VDI\n"
+"0xCA 202 Qcow\n"
+"0xCB 203 GPT\n"
+"0xCC 204 Rar5\n"
+"0xCD 205 IHex\n"
+"0xCE 206 Hxs\n"
+"0xCF 207 TE\n"
+"0xD0 208 UEFIc\n"
+"0xD1 209 UEFIs\n"
+"0xD2 210 SquashFS\n"
+"0xD3 211 CramFS\n"
+"0xD4 212 APM\n"
+"0xD5 213 Mslz\n"
+"0xD6 214 Flv\n"
+"0xD7 215 Swf\n"
+"0xD8 216 Swfc\n"
+"0xD9 217 Ntfs\n"
+"0xDA 218 Fat\n"
+"0xDB 219 Mbr\n"
+"0xDC 220 Vhd\n"
+"0xDD 221 Pe\n"
+"0xDE 222 Elf\n"
+"0xDF 223 Mach-O\n"
+"0xE0 224 Udf\n"
+"0xE1 225 Xar\n"
+"0xE2 226 Mub\n"
+"0xE3 227 Hfs\n"
+"0xE4 228 Dmg\n"
+"0xE5 229 Compound\n"
+"0xE6 230 Wim\n"
+"0xE7 231 Iso\n"
+"0xE9 233 Chm\n"
+"0xEA 234 Split\n"
+"0xEB 235 Rpm\n"
+"0xEC 236 Deb\n"
+"0xED 237 Cpio\n"
+"0xEE 238 Tar\n"
+"0xEF 239 GZip\n"
+	);
+	return 0;
+}
+
 #ifdef STANDALONE
 unsigned char buf[BUFLEN];
 int main(int argc, const char **argv){
@@ -248,12 +312,13 @@ int mini7z(int argc, const char **argv){
   printf(
   	"7z Extractor\n"
   	"Usage:\n"
+  	"mini7z i\n"
   	"mini7z [xl][PASSWORD] arc.7z [extract_dir] [filespec]\n"
 	"mini7z a[PASSWORD] TYPE LEVEL(-1) arc.7z [filespec] (cannot handle wildcard nor directories)\n"
 	"(possibly) find filespec -type f | xargs mini7z a 7 9 arc.7z\n"
   	"\n"
   );
-  if(argc<3)return -1;
+  if(argc<3 && !(argc==2&&argv[1][0]=='i'))return -1;
   const char *w="*";
   
   switch(argv[1][0]){
@@ -270,6 +335,7 @@ int mini7z(int argc, const char **argv){
 		if(argc<5)return -1;
 		return add(argv[1]+1,strtol(argv[2],NULL,0),strtol(argv[3],NULL,10),argv[4],argc-5,argv+5);
 	}
+	case 'i':return info();
 	default:return -1;
   }
 }
