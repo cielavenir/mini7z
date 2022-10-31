@@ -847,7 +847,12 @@ static funcCreateObject pCreateArchiver,pCreateCoder;
 typedef HRESULT (WINAPI*funcSetCodecs)(ICompressCodecsInfo_ *compressCodecsInfo);
 static funcSetCodecs pSetCodecs;
 typedef HRESULT (WINAPI*funcGetNumMethods)(u32 *numMethods);
+static funcGetNumMethods pGetNumMethods;
+typedef HRESULT (WINAPI*funcGetNumFormats)(u32 *numFormats);
+static funcGetNumFormats pGetNumFormats;
 typedef HRESULT (WINAPI*funcGetProperty)(u32 index, PROPID propID, PROPVARIANT *value);
+static funcGetProperty pGetMethodProperty;
+static funcGetProperty pGetHandlerProperty2;
 typedef HRESULT (WINAPI*funcCreateEncoder)(u32 index, const GUID *iid, void **coder);
 typedef HRESULT (WINAPI*funcCreateDecoder)(u32 index, const GUID *iid, void **coder);
 
@@ -855,13 +860,30 @@ typedef HRESULT (WINAPI*funcCreateDecoder)(u32 index, const GUID *iid, void **co
 	static HMODULE h7z=NULL;
 #else
 	static void *h7z=NULL;
+	#include <pwd.h>
+	#include <unistd.h>
 #endif
+
+typedef struct{
+	ICompressCodecsInfo_vt *vt;
+	u32 refs;
+
+	struct scv_vector *vCodecs;
+	struct scv_vector *vNumMethods;
+	struct scv_vector *vGetMethodProperty;
+	struct scv_vector *vCreateDecoder;
+	struct scv_vector *vCreateEncoder;
+} SCompressCodecsInfoExternal_;
+static SCompressCodecsInfoExternal_ scoder = {NULL, 0, NULL, NULL, NULL, NULL, NULL};
+static HRESULT WINAPI SCompressCodecsInfoExternal_GetNumMethods(void* _self, u32 *numMethods);
+static HRESULT WINAPI SCompressCodecsInfoExternal_GetProperty(void* _self, u32 index, PROPID propID, PROPVARIANT *value);
 
 int lzmaOpen7z(){
 	if(lzma7zAlive())return 0;
 
 	h7z=NULL;
 #ifndef NODLOPEN
+	//getenv is useful but it can cause security matter
 	//if(!h7z && getenv("MINI7Z_IMPL"))h7z=LoadLibraryA(getenv("MINI7Z_IMPL"));
 #if defined(_WIN32) || (!defined(__GNUC__) && !defined(__clang__))
 	if(!h7z)h7z=LoadLibraryA("C:\\Program Files\\7-Zip\\7z.dll");
@@ -870,18 +892,52 @@ int lzmaOpen7z(){
 	if(!h7z)h7z=LoadLibraryA("7z64.dll"); // lol... (for example, could be useful for Wine testing)
 	if(!h7z)h7z=LoadLibraryA("7z32.dll"); // lol...
 #else
+	// 7-zip-full
+	if(!h7z)h7z=LoadLibraryA("/usr/local/opt/7-zip-full/lib/7-zip-full/7z.so"); //Homebrew
+	if(!h7z)h7z=LoadLibraryA("/opt/homebrew/opt/7-zip-full/lib/7-zip-full/7z.so");
+	if(!h7z)h7z=LoadLibraryA("/home/linuxbrew/.linuxbrew/lib/7-zip-full/7z.so");
+	// if(!h7z)h7z=LoadLibraryA("/opt/local/lib/7-zip-full/7z.so"); //MacPorts
+	// if(!h7z)h7z=LoadLibraryA("/sw/lib/7-zip-full/7z.so"); //Fink
+	if(!h7z){
+#if !defined(FEOS) && !defined(__ANDROID__)
+		size_t buflen = sysconf(_SC_GETPW_R_SIZE_MAX)+128;
+		char *buf = malloc(buflen);
+		struct passwd pwd, *r=NULL;
+		getpwuid_r(getuid(), &pwd, buf, buflen, &r);
+		char *home = pwd.pw_dir;
+		//char *home = getenv("HOME");
+		if(home){
+			char buf[256];
+			sprintf(buf,"%s/.linuxbrew/lib/7-zip-full/7z.so",home);
+			h7z=LoadLibraryA(buf);
+		}
+		free(buf);
+#endif
+	}
+	if(!h7z)h7z=LoadLibraryA("/usr/lib/7-zip-full/7z.so"); //Generic
+	if(!h7z)h7z=LoadLibraryA("/usr/local/lib/7-zip-full/7z.so");
+	if(!h7z)h7z=LoadLibraryA("/usr/libexec/7-zip-full/7z.so");
+	// p7zip
 	if(!h7z)h7z=LoadLibraryA("/usr/local/opt/p7zip/lib/p7zip/7z.so"); //Homebrew
 	if(!h7z)h7z=LoadLibraryA("/opt/homebrew/opt/p7zip/lib/p7zip/7z.so");
 	if(!h7z)h7z=LoadLibraryA("/opt/local/lib/p7zip/7z.so"); //MacPorts
 	if(!h7z)h7z=LoadLibraryA("/sw/lib/p7zip/7z.so"); //Fink
 	if(!h7z)h7z=LoadLibraryA("/home/linuxbrew/.linuxbrew/lib/p7zip/7z.so");
 	if(!h7z){
-		char *home = getenv("HOME");
+#if !defined(FEOS) && !defined(__ANDROID__)
+		size_t buflen = sysconf(_SC_GETPW_R_SIZE_MAX)+128;
+		char *buf = malloc(buflen);
+		struct passwd pwd, *r=NULL;
+		getpwuid_r(getuid(), &pwd, buf, buflen, &r);
+		char *home = pwd.pw_dir;
+		//char *home = getenv("HOME");
 		if(home){
 			char buf[256];
 			sprintf(buf,"%s/.linuxbrew/lib/p7zip/7z.so",home);
 			h7z=LoadLibraryA(buf);
 		}
+		free(buf);
+#endif
 	}
 	if(!h7z)h7z=LoadLibraryA("/usr/lib/p7zip/7z.so"); //Generic
 	if(!h7z)h7z=LoadLibraryA("/usr/local/lib/p7zip/7z.so");
@@ -896,12 +952,15 @@ int lzmaOpen7z(){
 #if defined(_WIN32) || (!defined(__GNUC__) && !defined(__clang__))
 	pCreateArchiver=(funcCreateObject)GetProcAddress(h7z,"CreateObject");
 	pCreateCoder=(funcCreateObject)GetProcAddress(h7z,"CreateObject");
-	pSetCodecs=(funcSetCodecs)GetProcAddress(h7z,"SetCodecs");
 #else
 	pCreateArchiver=(funcCreateObject)GetProcAddress(h7z,"CreateArchiver");
 	pCreateCoder=(funcCreateObject)GetProcAddress(h7z,"CreateCoder");
-	pSetCodecs=(funcSetCodecs)GetProcAddress(h7z,"SetCodecs");
 #endif
+	pSetCodecs=(funcSetCodecs)GetProcAddress(h7z,"SetCodecs");
+	pGetNumFormats=(funcGetNumFormats)GetProcAddress(h7z,"GetNumberOfFormats");
+	pGetNumMethods=(funcGetNumMethods)GetProcAddress(h7z,"GetNumberOfMethods");
+	pGetHandlerProperty2 = (funcGetProperty)GetProcAddress(h7z,"GetHandlerProperty2");
+	pGetMethodProperty = (funcGetProperty)GetProcAddress(h7z,"GetMethodProperty");
 #endif
 	if(!lzma7zAlive()){
 #ifndef NODLOPEN
@@ -911,21 +970,19 @@ int lzmaOpen7z(){
 		return 2;
 	}
 
-	if(h7z){
-		//char path[768];
-#if 0
-//defined(DL_ANDROID)
-		//GetModuleFileNameA(pCreateArchiver,path,768);
-#else
-		//GetModuleFileNameA(h7z,path,768);
-#endif
-		//fprintf(stderr,"7-zip implementation: %s\n",path);
-	}
-
 	return 0; //now you can call 7z.so.
 }
 bool lzma7zAlive(){
-	return h7z&&pCreateArchiver&&pCreateCoder&&pSetCodecs;
+	return h7z&&pCreateArchiver&&pCreateCoder&&pSetCodecs&&pGetNumFormats&&pGetNumMethods&&pGetHandlerProperty2&&pGetMethodProperty;
+}
+int lzmaGet7zFileName(char* path, int siz){
+	if(!lzma7zAlive())return 0;
+#if 0
+//defined(DL_ANDROID)
+	return GetModuleFileNameA(pCreateArchiver,path,siz);
+#else
+	return GetModuleFileNameA(h7z,path,siz);
+#endif
 }
 int lzmaClose7z(){
 	if(!lzma7zAlive())return 1;
@@ -933,6 +990,86 @@ int lzmaClose7z(){
 	FreeLibrary(h7z);
 #endif
 	h7z=NULL;
+	return 0;
+}
+
+int lzmaShowInfos(){
+	if(!lzma7zAlive())return 1;
+	FILE *out = stderr;
+	char strbuf[768];
+
+	lzmaGet7zFileName(strbuf, 768);
+	fprintf(out,"7-zip implementation: %s\n\n", strbuf);
+
+	fprintf(out, "Formats:\n");
+	u32 numFormats;
+	pGetNumFormats(&numFormats);
+	for(u32 i=0;i<numFormats;i++){
+		PROPVARIANT value;
+		pGetHandlerProperty2(i, NHandlerPropID_kName, &value);
+		wcstombs(strbuf, value.bstrVal, 768);
+		fprintf(out, "%s\t", strbuf);
+		if(strlen(strbuf)<8)fputc('\t', out);
+		// PropVariantClear(&value); // cleared externally
+		pGetHandlerProperty2(i, NHandlerPropID_kClassID, &value);
+		fprintf(out, "%d (0x%02x)\t", ((u8*)value.bstrVal)[13], ((u8*)value.bstrVal)[13]);
+		pGetHandlerProperty2(i, NHandlerPropID_kUpdate, &value);
+		fputc(value.boolVal ? 'C' : '-', out);
+		pGetHandlerProperty2(i, NHandlerPropID_kFlags, &value);
+		// CPP/7zip/UI/Console/Main.cpp
+		for(u32 j=0;j<14;j++)fputc((value.uintVal&(1<<j)) ? "KSNFMGOPBELHXC"[j] : '-', out);
+		pGetHandlerProperty2(i, NHandlerPropID_kExtension, &value);
+		wcstombs(strbuf, value.bstrVal, 768);
+		fprintf(out, "\t%s", strbuf);
+		//pGetHandlerProperty2(i, NHandlerPropID_kSignature, &value);
+		//wcstombs(strbuf, value.bstrVal, 768);
+		//fprintf(out, "\t%s", strbuf);
+		fprintf(out, "\n");
+	}
+
+	fprintf(out, "Codecs:\n");
+	u32 numMethods;
+	pGetNumMethods(&numMethods);
+	for(u32 i=0;i<numMethods;i++){
+		PROPVARIANT value;
+		pGetMethodProperty(i, NMethodPropID_kName, &value);
+		wcstombs(strbuf, value.bstrVal, 768);
+		fprintf(out, "%s\t", strbuf);
+		if(strlen(strbuf)<8)fputc('\t', out);
+		pGetMethodProperty(i, NMethodPropID_kID, &value);
+		fprintf(out, "0x%08x\t", value.uintVal);
+		pGetMethodProperty(i, NMethodPropID_kEncoderIsAssigned, &value);
+		fputc(value.boolVal ? 'E' : '-', out);
+		pGetMethodProperty(i, NMethodPropID_kDecoderIsAssigned, &value);
+		fputc(value.boolVal ? 'D' : '-', out);
+		HRESULT r = pGetMethodProperty(i, NMethodPropID_kIsFilter, &value);
+		fputc(r ? '*' : value.boolVal ? 'F' : '-', out);
+		//r = pGetMethodProperty(i, NMethodPropID_kDescription, &value);
+		//if(!r){
+		//	wcstombs(strbuf, value.bstrVal, 768);
+		//	fprintf(out, "\t%s", strbuf);
+		//}
+		fprintf(out, "\n");
+	}
+	if(scoder.vt){
+		SCompressCodecsInfoExternal_GetNumMethods(&scoder, &numMethods);
+		for(u32 i=0;i<numMethods;i++){
+			PROPVARIANT value;
+			SCompressCodecsInfoExternal_GetProperty(&scoder, i, NMethodPropID_kName, &value);
+			wcstombs(strbuf, value.bstrVal, 768);
+			fprintf(out, "%s\t", strbuf);
+			if(strlen(strbuf)<8)fputc('\t', out);
+			SCompressCodecsInfoExternal_GetProperty(&scoder, i, NMethodPropID_kID, &value);
+			fprintf(out, "0x%08x\t", value.uintVal);
+			SCompressCodecsInfoExternal_GetProperty(&scoder, i, NMethodPropID_kEncoderIsAssigned, &value);
+			fputc(value.boolVal ? 'E' : '-', out);
+			SCompressCodecsInfoExternal_GetProperty(&scoder, i, NMethodPropID_kDecoderIsAssigned, &value);
+			fputc(value.boolVal ? 'D' : '-', out);
+			HRESULT r = SCompressCodecsInfoExternal_GetProperty(&scoder, i, NMethodPropID_kIsFilter, &value);
+			fputc(r ? '*' : value.boolVal ? 'F' : '-', out);
+			fprintf(out, "\n");
+		}
+	}
 	return 0;
 }
 
@@ -1192,18 +1329,6 @@ int lzmaCodeCallback(void *coder, void *hin, tRead pRead_in, tClose pClose_in, v
 typedef void* HMODULE;
 #endif
 
-typedef struct{
-	ICompressCodecsInfo_vt *vt;
-	u32 refs;
-
-	struct scv_vector *vCodecs;
-	struct scv_vector *vNumMethods;
-	struct scv_vector *vGetProperty;
-	struct scv_vector *vCreateDecoder;
-	struct scv_vector *vCreateEncoder;
-} SCompressCodecsInfoExternal_;
-static SCompressCodecsInfoExternal_ scoder = {NULL, 0, NULL, NULL, NULL, NULL, NULL};
-
 static HRESULT SCompressCodecsInfoExternal_QueryInterface(void* _self, const GUID* iid, void** out_obj){
 	LZMA_UNUSED SCompressCodecsInfoExternal_ *self = (SCompressCodecsInfoExternal_*)_self;
 	*out_obj = NULL;
@@ -1231,8 +1356,8 @@ static u32 WINAPI SCompressCodecsInfoExternal_Release(void* _self){
 		}
 		if(self->vNumMethods)scv_delete(self->vNumMethods);
 		self->vNumMethods=NULL;
-		if(self->vGetProperty)scv_delete(self->vGetProperty);
-		self->vGetProperty=NULL;
+		if(self->vGetMethodProperty)scv_delete(self->vGetMethodProperty);
+		self->vGetMethodProperty=NULL;
 		if(self->vCreateEncoder)scv_delete(self->vCreateEncoder);
 		self->vCreateEncoder=NULL;
 		if(self->vCreateDecoder)scv_delete(self->vCreateDecoder);
@@ -1257,7 +1382,7 @@ static HRESULT WINAPI SCompressCodecsInfoExternal_GetProperty(void* _self, u32 i
 	for(size_t i=0; i<n; i++){
 		u32 numMethods = *(u32*)scv_at(self->vNumMethods, i);
 		if(numMethods>index){
-			return (*(funcGetProperty*)scv_at(self->vGetProperty, i))(index,propID,value);
+			return (*(funcGetProperty*)scv_at(self->vGetMethodProperty, i))(index,propID,value);
 		}
 		index -= numMethods;
 	}
@@ -1299,7 +1424,7 @@ int lzmaLoadExternalCodecs(){
 #else
 		scoder.vCodecs = scv_new(sizeof(HMODULE), 0);
 		scoder.vNumMethods = scv_new(sizeof(u32), 0);
-		scoder.vGetProperty = scv_new(sizeof(void*), 0);
+		scoder.vGetMethodProperty = scv_new(sizeof(void*), 0);
 		scoder.vCreateDecoder = scv_new(sizeof(void*), 0);
 		scoder.vCreateEncoder = scv_new(sizeof(void*), 0);
 		{
@@ -1323,16 +1448,16 @@ int lzmaLoadExternalCodecs(){
 					HMODULE h=LoadLibraryA(path);
 					if(h){
 						funcGetNumMethods pGetNumMethods = (funcGetNumMethods)GetProcAddress(h,"GetNumberOfMethods");
-						funcGetProperty pGetProperty = (funcGetProperty)GetProcAddress(h,"GetMethodProperty");
+						funcGetProperty pGetMethodProperty = (funcGetProperty)GetProcAddress(h,"GetMethodProperty");
 						funcCreateDecoder pCreateDecoder = (funcCreateDecoder)GetProcAddress(h,"CreateDecoder");
 						funcCreateEncoder pCreateEncoder = (funcCreateEncoder)GetProcAddress(h,"CreateEncoder");
-						if(pGetNumMethods && pGetProperty && pCreateDecoder && pCreateEncoder){
+						if(pGetNumMethods && pGetMethodProperty && pCreateDecoder && pCreateEncoder){
 							u32 numMethods = 0;
 							HRESULT ret = pGetNumMethods(&numMethods);
 							if(ret == S_OK){
 								scv_push_back(scoder.vCodecs, &h);
 								scv_push_back(scoder.vNumMethods, &numMethods);
-								scv_push_back(scoder.vGetProperty, &pGetProperty);
+								scv_push_back(scoder.vGetMethodProperty, &pGetMethodProperty);
 								scv_push_back(scoder.vCreateDecoder, &pCreateDecoder);
 								scv_push_back(scoder.vCreateEncoder, &pCreateEncoder);
 							}else{

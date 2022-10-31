@@ -242,6 +242,7 @@ static int add(const char *password,unsigned char arctype,int level,const char *
 // 7zip/Guid.txt
 // ruby -nae 'puts "\"0x%s %3d %s\\n\""%[$F[0],$F[0].to_i(16),$F[1]] if $F.size==2'
 
+#if 0
 static int info(){
 	fprintf(stderr,
 "known archive types:\n"
@@ -302,6 +303,7 @@ static int info(){
 	);
 	return 0;
 }
+#endif
 
 #ifdef STANDALONE
 unsigned char buf[BUFLEN];
@@ -335,7 +337,17 @@ int mini7z(int argc, const char **argv){
 		if(argc<5)return -1;
 		return add(argv[1]+1,strtol(argv[2],NULL,0),strtol(argv[3],NULL,10),argv[4],argc-5,argv+5);
 	}
-	case 'i':return info();
+	case 'i':{
+		if(lzmaOpen7z()){
+			fprintf(stderr,"cannot load 7z.so.\n");
+			return -1;
+		}
+		lzmaLoadExternalCodecs();
+		int ret = lzmaShowInfos();//info();
+		lzmaUnloadExternalCodecs();
+		lzmaClose7z();
+		return ret;
+	}
 	default:return -1;
   }
 }
