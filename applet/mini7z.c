@@ -10,6 +10,8 @@
 #include <time.h>
 #include <sys/stat.h>
 
+static int guessed7zVersion = 0;
+
 static WORD LastByte(LPCSTR lpszStr){
 	int n=strlen(lpszStr);
 	return n ? lpszStr[n-1] : 0;
@@ -23,18 +25,18 @@ static int match(const char *name, int argc, const char **argv){
 }
 
 typedef struct{
-	IArchiveExtractCallback_vt *vt;
+	IArchiveExtractCallback22_vt *vt;
 	u32 refs;
-	SCryptoGetTextPasswordFixed setpassword;
-	IInArchive_ *archiver;
+	SCryptoGetTextPasswordFixed22 setpassword;
+	IInArchive22_ *archiver;
 	u32 lastIndex;
 	int argc;
 	const char **argv;
 	const char *dir;
-} SArchiveExtractCallbackFileList;
+} SArchiveExtractCallbackFileList22;
 
-static HRESULT WINAPI SArchiveExtractCallbackFileList_GetStream(void* _self, u32 index, /*ISequentialOutStream_*/IOutStream_ **outStream, s32 askExtractMode){
-	SArchiveExtractCallbackFileList *self = (SArchiveExtractCallbackFileList*)_self;
+static HRESULT WINAPI SArchiveExtractCallbackFileList22_GetStream(void* _self, u32 index, /*ISequentialOutStream22_*/IOutStream22_ **outStream, s32 askExtractMode){
+	SArchiveExtractCallbackFileList22 *self = (SArchiveExtractCallbackFileList22*)_self;
 	*outStream = NULL;
 	PROPVARIANT path;
 	memset(&path,0,sizeof(PROPVARIANT));
@@ -49,8 +51,8 @@ static HRESULT WINAPI SArchiveExtractCallbackFileList_GetStream(void* _self, u32
 		if(!match(fname+dirlen,self->argc,self->argv)){
 			printf("Extracting %s...\n",fname+dirlen);
 			makedir(fname);
-			IOutStream_* stream = (IOutStream_*)calloc(1,sizeof(SOutStreamFile));
-			MakeSOutStreamFile((SOutStreamFile*)stream,fname,false);
+			IOutStream22_* stream = (IOutStream22_*)calloc(1,sizeof(SOutStreamFile22));
+			MakeSOutStreamFile22((SOutStreamFile22*)stream,fname,false);
 			*outStream = stream; // WILL BE RELEASED AUTOMATICALLY.
 		}
 	}
@@ -59,132 +61,85 @@ static HRESULT WINAPI SArchiveExtractCallbackFileList_GetStream(void* _self, u32
 	return S_OK;
 }
 
-static int extract(const char *password,const char *arc, const char *dir, int argc, const char **argv){
-	if(lzmaOpen7z()){
-		fprintf(stderr,"cannot load 7z.so.\n");
-		return -1;
-	}
-	lzmaLoadExternalCodecs();
-	SInStreamFile sin;
-	MakeSInStreamFile(&sin,arc);
-	void *archiver=NULL;
-	unsigned char arctype=0;
-	for(;arctype<0xff;arctype++){
-		if(!lzmaCreateArchiver(&archiver,arctype,0,0)){
-			sin.vt->Seek(&sin,0,SEEK_SET,NULL); // archiver should do this automatically lol lol lol
-			if(!lzmaOpenArchive(archiver,&sin,password,arc))break;
-			lzmaDestroyArchiver(&archiver,0);
-		}
-	}
-	if(!archiver){
-		fprintf(stderr,"7z.so could not open the file as any archive (possibly encrypted).\n");
-		sin.vt->Release(&sin);
-		lzmaClose7z();
-		return 1;
-	}
-	printf("arctype = %d .\n\n",arctype);
-
-	SArchiveExtractCallbackFileList sextract;
-	MakeSArchiveExtractCallbackBare((SArchiveExtractCallbackBare*)&sextract,(IInArchive_*)archiver,password);
-	sextract.argc = argc;
-	sextract.argv = argv;
-	sextract.dir = dir;
-	sextract.vt->GetStream = SArchiveExtractCallbackFileList_GetStream;
-	lzmaExtractArchive(archiver, NULL, -1, 0, (IArchiveExtractCallback_*)&sextract);
-
-	lzmaDestroyArchiver(&archiver,0);
-	sin.vt->Release(&sin);
-	lzmaUnloadExternalCodecs();
-	lzmaClose7z();
-
-	return 0;
-}
-
-static int list(const char *password,const char *arc, int argc, const char **argv){
-	if(lzmaOpen7z()){
-		fprintf(stderr,"cannot load 7z.so.\n");
-		return -1;
-	}
-	SInStreamFile sin;
-	MakeSInStreamFile(&sin,arc);
-	void *archiver=NULL;
-	unsigned char arctype=0;
-	for(;arctype<0xff;arctype++){
-		if(!lzmaCreateArchiver(&archiver,arctype,0,0)){
-			sin.vt->Seek(&sin,0,SEEK_SET,NULL); // archiver should do this automatically lol lol lol
-			if(!lzmaOpenArchive(archiver,&sin,password,arc))break;
-			lzmaDestroyArchiver(&archiver,0);
-		}
-	}
-	if(!archiver){
-		fprintf(stderr,"7z.so could not open the file as any archive (possibly encrypted).\n");
-		sin.vt->Release(&sin);
-		lzmaClose7z();
-		return 1;
-	}
-	printf("arctype = %d .\n\n",arctype);
-	int num_items;
-	lzmaGetArchiveFileNum(archiver,(u32*)&num_items); // to deal with empty archive...
-	printf("Name                                     PackedSize Size       Time                Method              \n");
-	printf("---------------------------------------- ---------- ---------- ------------------- --------------------\n");
-	for(int i=0;i<num_items;i++){
-		PROPVARIANT propPath,propMethod,propPackedSize,propSize,propMTime;
-		memset(&propPath,0,sizeof(PROPVARIANT));
-		memset(&propMethod,0,sizeof(PROPVARIANT));
-		memset(&propPackedSize,0,sizeof(PROPVARIANT));
-		memset(&propSize,0,sizeof(PROPVARIANT));
-		memset(&propMTime,0,sizeof(PROPVARIANT));
-		lzmaGetArchiveFileProperty(archiver,i,kpidPath,&propPath);
-		lzmaGetArchiveFileProperty(archiver,i,kpidMethod,&propMethod);
-		lzmaGetArchiveFileProperty(archiver,i,kpidPackSize,&propPackedSize);
-		lzmaGetArchiveFileProperty(archiver,i,kpidSize,&propSize);
-		lzmaGetArchiveFileProperty(archiver,i,kpidMTime,&propMTime);
-		cbuf[0]=0;
-		if(propPath.bstrVal)wcstombs(cbuf,propPath.bstrVal,BUFLEN);
-		if(!match(cbuf,argc,argv)){
-			time_t t = FileTimeToUTC(propMTime.filetime);
-			struct tm tt;
-#if defined(_WIN32) || (!defined(__GNUC__) && !defined(__clang__))
-			localtime_s(&tt,&t);
-#else
-			localtime_r(&t,&tt);
-#endif
-			strftime(cbuf,99,"%Y-%m-%d %H:%M:%S",&tt);
-			printf("%-40ls %10"LLU" %10"LLU" %s %-20ls\n",propPath.bstrVal,propPackedSize.uhVal.QuadPart,propSize.uhVal.QuadPart,cbuf,propMethod.bstrVal);
-		}
-		PropVariantClear(&propPath);
-		PropVariantClear(&propMethod);
-	}
-	printf("---------------------------------------- ---------- ---------- ------------------- --------------------\n");
-	lzmaDestroyArchiver(&archiver,0);
-	sin.vt->Release(&sin);
-	lzmaClose7z();
-
-	return 0;
-}
-
 typedef struct{
-	IArchiveUpdateCallback_vt *vt;
+	IArchiveExtractCallback23_vt *vt;
 	u32 refs;
-	SCryptoGetTextPassword2Fixed setpassword;
-	IOutArchive_ *archiver;
+	SCryptoGetTextPasswordFixed23 setpassword;
+	IInArchive23_ *archiver;
 	u32 lastIndex;
 	int argc;
 	const char **argv;
-} SArchiveUpdateCallbackFileList;
+	const char *dir;
+} SArchiveExtractCallbackFileList23;
 
-static HRESULT WINAPI SArchiveUpdateCallbackFileList_GetStream(void* _self, u32 index, /*ISequentialInStream_*/IInStream_ **inStream){
-	SArchiveUpdateCallbackFileList *self = (SArchiveUpdateCallbackFileList*)_self;
+static HRESULT WINAPI SArchiveExtractCallbackFileList23_GetStream(void* _self, u32 index, /*ISequentialOutStream23_*/IOutStream23_ **outStream, s32 askExtractMode){
+	SArchiveExtractCallbackFileList23 *self = (SArchiveExtractCallbackFileList23*)_self;
+	*outStream = NULL;
+	PROPVARIANT path;
+	memset(&path,0,sizeof(PROPVARIANT));
+	self->lastIndex = index;
+	lzmaGetArchiveFileProperty(self->archiver, index, kpidPath, &path);
+	int len = SysStringLen(path.bstrVal);
+	int dirlen = strlen(self->dir);
+	char *fname = (char*)calloc(1,dirlen+len*3);
+	strcpy(fname,self->dir);
+	if(path.bstrVal){
+		wcstombs(fname+dirlen,path.bstrVal,len*3);
+		if(!match(fname+dirlen,self->argc,self->argv)){
+			printf("Extracting %s...\n",fname+dirlen);
+			makedir(fname);
+			IOutStream23_* stream = (IOutStream23_*)calloc(1,sizeof(SOutStreamFile23));
+			MakeSOutStreamFile23((SOutStreamFile23*)stream,fname,false);
+			*outStream = stream; // WILL BE RELEASED AUTOMATICALLY.
+		}
+	}
+	PropVariantClear(&path);
+	free(fname);
+	return S_OK;
+}
+
+typedef struct{
+	IArchiveUpdateCallback22_vt *vt;
+	u32 refs;
+	SCryptoGetTextPassword2Fixed22 setpassword;
+	IOutArchive22_ *archiver;
+	u32 lastIndex;
+	int argc;
+	const char **argv;
+} SArchiveUpdateCallbackFileList22;
+
+static HRESULT WINAPI SArchiveUpdateCallbackFileList22_GetStream(void* _self, u32 index, /*ISequentialInStream22_*/IInStream22_ **inStream){
+	SArchiveUpdateCallbackFileList22 *self = (SArchiveUpdateCallbackFileList22*)_self;
 	*inStream = NULL;
-	IInStream_* stream = (IInStream_*)calloc(1,sizeof(SInStreamFile));
-	if(!MakeSInStreamFile((SInStreamFile*)stream,self->argv[index])){free(stream);return E_FAIL;}
+	IInStream22_* stream = (IInStream22_*)calloc(1,sizeof(SInStreamFile22));
+	if(!MakeSInStreamFile22((SInStreamFile22*)stream,self->argv[index])){free(stream);return E_FAIL;}
+	printf("Compressing %s...\n",self->argv[index]);
+	*inStream = stream; // WILL BE RELEASED AUTOMATICALLY.
+	return S_OK;
+}
+
+typedef struct{
+	IArchiveUpdateCallback23_vt *vt;
+	u32 refs;
+	SCryptoGetTextPassword2Fixed23 setpassword;
+	IOutArchive23_ *archiver;
+	u32 lastIndex;
+	int argc;
+	const char **argv;
+} SArchiveUpdateCallbackFileList23;
+
+static HRESULT WINAPI SArchiveUpdateCallbackFileList23_GetStream(void* _self, u32 index, /*ISequentialInStream23_*/IInStream23_ **inStream){
+	SArchiveUpdateCallbackFileList23 *self = (SArchiveUpdateCallbackFileList23*)_self;
+	*inStream = NULL;
+	IInStream23_* stream = (IInStream23_*)calloc(1,sizeof(SInStreamFile23));
+	if(!MakeSInStreamFile23((SInStreamFile23*)stream,self->argv[index])){free(stream);return E_FAIL;}
 	printf("Compressing %s...\n",self->argv[index]);
 	*inStream = stream; // WILL BE RELEASED AUTOMATICALLY.
 	return S_OK;
 }
 
 static HRESULT WINAPI SArchiveUpdateCallbackFileList_GetProperty(void* _self, u32 index, PROPID propID, PROPVARIANT *value){
-	SArchiveUpdateCallbackFileList *self = (SArchiveUpdateCallbackFileList*)_self;
+	SArchiveUpdateCallbackFileList23 *self = (SArchiveUpdateCallbackFileList23*)_self;
 	//printf("%d %d\n",index,propID);
 	if(propID == kpidPath){
 		int len=strlen(self->argv[index]);
@@ -212,31 +167,92 @@ static HRESULT WINAPI SArchiveUpdateCallbackFileList_GetProperty(void* _self, u3
 	return S_OK;
 }
 
-static int add(const char *password,unsigned char arctype,int level,const char *arc, int argc, const char **argv){
-	if(lzmaOpen7z()){
-		fprintf(stderr,"cannot load 7z.so.\n");
-		return -1;
-	}
-	void *archiver=NULL;
-	if(lzmaCreateArchiver(&archiver,arctype,1,level)){
-		fprintf(stderr,"7z.so does not have the encoder for this file type.\n");
-		lzmaClose7z();
-		return 1;
-	}
-	SOutStreamFile sout;
-	MakeSOutStreamFile(&sout,arc,false); //true); /// todo implement GetUpdateItemInfo properly
-	SArchiveUpdateCallbackFileList supdate;
-	MakeSArchiveUpdateCallbackBare((SArchiveUpdateCallbackBare*)&supdate,(IOutArchive_*)archiver,password&&*password?password:NULL);
-	supdate.argc = argc;
-	supdate.argv = argv;
-	supdate.vt->GetStream = SArchiveUpdateCallbackFileList_GetStream;
-	supdate.vt->GetProperty = SArchiveUpdateCallbackFileList_GetProperty;
-	lzmaUpdateArchive(archiver,&sout,argc,&supdate);
-	lzmaDestroyArchiver(&archiver,1);
-	sout.vt->Release(&sout);
-	lzmaClose7z();
+#define extract extract23
+#define list list23
+#define add add23
+#define IInArchive_ IInArchive23_
+#define IArchiveExtractCallback_ IArchiveExtractCallback23_
+#define IOutArchive_ IOutArchive23_
+#define SInStreamFile SInStreamFile23
+#define SArchiveExtractCallbackFileList SArchiveExtractCallbackFileList23
+#define SArchiveExtractCallbackBare SArchiveExtractCallbackBare23
+#define SOutStreamFile SOutStreamFile23
+#define SArchiveUpdateCallbackFileList SArchiveUpdateCallbackFileList23
+#define SArchiveUpdateCallbackBare SArchiveUpdateCallbackBare23
+#define MakeSInStreamFile MakeSInStreamFile23
+#define MakeSArchiveExtractCallbackBare MakeSArchiveExtractCallbackBare23
+#define MakeSOutStreamFile MakeSOutStreamFile23
+#define MakeSArchiveUpdateCallbackBare MakeSArchiveUpdateCallbackBare23
+#define SArchiveExtractCallbackFileList_GetStream SArchiveExtractCallbackFileList23_GetStream
+#define SArchiveUpdateCallbackFileList_GetStream SArchiveUpdateCallbackFileList23_GetStream
+#include "mini7z_23.h"
+#undef extract
+#undef list
+#undef add
+#undef IInArchive_
+#undef IArchiveExtractCallback_
+#undef IOutArchive_
+#undef SInStreamFile
+#undef SArchiveExtractCallbackFileList
+#undef SArchiveExtractCallbackBare
+#undef SOutStreamFile
+#undef SArchiveUpdateCallbackFileList
+#undef SArchiveUpdateCallbackBare
+#undef MakeSInStreamFile
+#undef MakeSArchiveExtractCallbackBare
+#undef MakeSOutStreamFile
+#undef MakeSArchiveUpdateCallbackBare
+#undef SArchiveExtractCallbackFileList_GetStream
+#undef SArchiveUpdateCallbackFileList_GetStream
 
-	return 0;
+#define extract extract22
+#define list list22
+#define add add22
+#define IInArchive_ IInArchive22_
+#define IArchiveExtractCallback_ IArchiveExtractCallback22_
+#define IOutArchive_ IOutArchive22_
+#define SInStreamFile SInStreamFile22
+#define SArchiveExtractCallbackFileList SArchiveExtractCallbackFileList22
+#define SArchiveExtractCallbackBare SArchiveExtractCallbackBare22
+#define SOutStreamFile SOutStreamFile22
+#define SArchiveUpdateCallbackFileList SArchiveUpdateCallbackFileList22
+#define SArchiveUpdateCallbackBare SArchiveUpdateCallbackBare22
+#define MakeSInStreamFile MakeSInStreamFile22
+#define MakeSArchiveExtractCallbackBare MakeSArchiveExtractCallbackBare22
+#define MakeSOutStreamFile MakeSOutStreamFile22
+#define MakeSArchiveUpdateCallbackBare MakeSArchiveUpdateCallbackBare22
+#define SArchiveExtractCallbackFileList_GetStream SArchiveExtractCallbackFileList22_GetStream
+#define SArchiveUpdateCallbackFileList_GetStream SArchiveUpdateCallbackFileList22_GetStream
+#include "mini7z_23.h"
+#undef extract
+#undef list
+#undef add
+#undef IInArchive_
+#undef IArchiveExtractCallback_
+#undef IOutArchive_
+#undef SInStreamFile
+#undef SArchiveExtractCallbackFileList
+#undef SArchiveExtractCallbackBare
+#undef SOutStreamFile
+#undef SArchiveUpdateCallbackFileList
+#undef SArchiveUpdateCallbackBare
+#undef MakeSInStreamFile
+#undef MakeSArchiveExtractCallbackBare
+#undef MakeSOutStreamFile
+#undef MakeSArchiveUpdateCallbackBare
+#undef SArchiveExtractCallbackFileList_GetStream
+#undef SArchiveUpdateCallbackFileList_GetStream
+
+static int extract(const char *password,const char *arc, const char *dir, int argc, const char **argv){
+	return guessed7zVersion>=2300 ? extract23(password, arc, dir, argc, argv) : extract22(password, arc, dir, argc, argv);
+}
+
+static int list(const char *password,const char *arc, int argc, const char **argv){
+	return guessed7zVersion>=2300 ? list23(password, arc, argc, argv) : list22(password, arc, argc, argv);
+}
+
+static int add(const char *password,unsigned char arctype,int level,const char *arc, int argc, const char **argv){
+	return guessed7zVersion>=2300 ? add23(password, arctype, level, arc, argc, argv) : add22(password, arctype, level, arc, argc, argv);
 }
 
 // 7zip/Guid.txt
@@ -322,7 +338,15 @@ int mini7z(int argc, const char **argv){
   );
   if(argc<3 && !(argc==2&&argv[1][0]=='i'))return -1;
   const char *w="*";
-  
+
+  if(lzmaOpen7z()){
+    fprintf(stderr,"cannot load 7z.so.\n");
+    return -1;
+  }
+  guessed7zVersion = lzmaGuessVersion();
+  lzmaLoadExternalCodecs();
+
+  int ret = -1;
   switch(argv[1][0]){
 	case 'x':{
 		const char *password=argv[1]+1;
@@ -330,24 +354,30 @@ int mini7z(int argc, const char **argv){
 		const char *dir="./";
 		argv+=3;argc-=3;
 		if(argv[0]&&(LastByte(argv[0])=='/'||LastByte(argv[0])=='\\')){makedir(argv[0]);dir=argv[0];argv++;argc--;}
-		return extract(password,arc,dir,argc?argc:1,argc?argv:&w);
+		ret = extract(password,arc,dir,argc?argc:1,argc?argv:&w);
+		break;
 	}
-	case 'l':return list(argv[1]+1,argv[2],argc-3?argc-3:1,argc-3?argv+3:&w);
+    case 'l':{
+		ret = list(argv[1]+1,argv[2],argc-3?argc-3:1,argc-3?argv+3:&w);
+		break;
+	}
 	case 'a':{
-		if(argc<5)return -1;
-		return add(argv[1]+1,strtol(argv[2],NULL,0),strtol(argv[3],NULL,10),argv[4],argc-5,argv+5);
+		if(argc<5){
+			ret = -1;
+		}else{
+		    ret = add(argv[1]+1,strtol(argv[2],NULL,0),strtol(argv[3],NULL,10),argv[4],argc-5,argv+5);
+		}
+		break;
 	}
 	case 'i':{
-		if(lzmaOpen7z()){
-			fprintf(stderr,"cannot load 7z.so.\n");
-			return -1;
-		}
-		lzmaLoadExternalCodecs();
-		int ret = lzmaShowInfos();//info();
-		lzmaUnloadExternalCodecs();
-		lzmaClose7z();
-		return ret;
+		ret = lzmaShowInfos(stderr);//info();
+		break;
 	}
-	default:return -1;
+	default:{
+		ret = -1;
+	}
   }
+  lzmaUnloadExternalCodecs();
+  lzmaClose7z();
+  return ret;
 }
