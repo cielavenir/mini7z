@@ -118,7 +118,7 @@ export DEPSDIR := $(CURDIR)/$(BUILD)
 export VPATH	:=	$(CURDIR)
 
 CFILES		:=	$(foreach dir,$(SOURCES),$(wildcard $(dir)/*.c))
-CPPFILES	:=	$(foreach dir,$(SOURCES),$(wildcard $(dir)/*.cpp))
+CPPFILES	:=	# $(foreach dir,$(SOURCES),$(wildcard $(dir)/*.cpp))
 SFILES		:=	$(foreach dir,$(SOURCES),$(wildcard $(dir)/*.s))
 #BINFILES	:=	$(foreach dir,$(DATA),$(notdir $(wildcard $(dir)/*.*)))
  
